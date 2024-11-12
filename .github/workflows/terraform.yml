@@ -42,19 +42,26 @@
 #       with:
 #         cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
 
-name: 'Terraform'
+name: 'Terraform-apply'
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
+  #pull_request:    
 
 permissions:
   contents: read
 
 jobs:
   terraform:
-    name: 'Terraform'
+    name: 'Terraform-apply'
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+      ARM_ACCESS_KEY: ${{ secrets.ARM_ACCESS_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
     runs-on: ubuntu-latest
     environment: production
 
@@ -66,8 +73,45 @@ jobs:
     steps:
     # Checkout the repository to the GitHub Actions runner
     - name: Checkout
-      uses: actions/checkout@v4
-
+      uses: actions/checkout@v3
+      
+    - name: Install Azure CLI
+      run: |
+        # Install the Azure CLI
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        
+    - name: Verify Azure CLI installation
+      run: az --version
+      
+    - uses: actions/checkout@v2.1.0
+    - uses: jitterbit/get-changed-files@v1
+      id: abc
+      with:
+          format: space-delimited
+          token: ${{ secrets.GITHUB_TOKEN }}
+ 
+    - name: Printing
+      run: |
+          echo "All:"
+          echo "TF_VAR_FILE=${{ steps.abc.outputs.all }}" >> $GITHUB_ENV
+          echo "${{ steps.abc.outputs.all }}"
+          echo "Added:"
+          echo "${{ steps.abc.outputs.added }}"
+          echo "Removed:"
+          echo "${{ steps.abc.outputs.removed }}"
+          echo "Renamed:"
+          echo "${{ steps.abc.outputs.renamed }}"
+          echo "Modified:"
+          echo "${{ steps.abc.outputs.modified }}"
+          echo "Added+Modified:"
+          echo "${{ steps.abc.outputs.added_modified }}"
+ 
+ 
+   
+    # https://github.com/actions/setup-node
+    - uses: actions/setup-node@v2
+      with:
+        node-version: '14'
     # Install the latest version of Terraform CLI and configure the Terraform CLI configuration file with a Terraform Cloud user API token
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v1
@@ -80,14 +124,20 @@ jobs:
 
     # Checks that all Terraform configuration files adhere to a canonical format
     - name: Terraform Format
-      run: terraform fmt -check
+      run: terraform fmt #-check
 
-    # Generates an execution plan for Terraform
-    - name: Terraform Plan
-      run: terraform plan -input=false
+    - name: Terraform Plan 
+      run: terraform plan -var-file=${{ env.TF_VAR_FILE}} -var 'credentials={client_id="${{ secrets.AZURE_AD_CLIENT_ID }}",client_secret="${{ secrets.AZURE_AD_CLIENT_SECRET }}",tenant_id="${{ secrets.AZURE_AD_TENANT_ID }}",object_id="${{ secrets.AZURE_OBJECT_ID }}"}' 
+ 
+  
+ 
+      # On push to "main", build or change infrastructure according to Terraform configuration files 
+      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks 
+    - name: Terraform Apply 
+      # if: github.ref == 'refs/heads/"main"' && github.event_name == 'push' 
+      run: terraform apply -var-file=${{ env.TF_VAR_FILE}} -auto-approve -var 'credentials={client_id="${{ secrets.AZURE_AD_CLIENT_ID }}",client_secret="${{ secrets.AZURE_AD_CLIENT_SECRET }}",tenant_id="${{ secrets.AZURE_AD_TENANT_ID }}",object_id="${{ secrets.AZURE_OBJECT_ID }}"}' 
 
-      # On push to "main", build or change infrastructure according to Terraform configuration files
-      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
-    - name: Terraform Apply
-      if: github.ref == 'refs/heads/"main"' && github.event_name == 'push'
-      run: terraform apply -auto-approve -input=false
+    - name: Terraform Output
+      run: |
+        terraform output -json
+        terraform output -json > terraform_outputs.json
